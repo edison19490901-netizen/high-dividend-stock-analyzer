@@ -240,39 +240,9 @@ button{{background:#3b82f6;color:#fff;border:none;padding:14px;border-radius:10p
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         lock.write_text(datetime.now().isoformat())
 
-        # 后台执行，完成后发通知
-        script = (
-            "import subprocess, sys, json, urllib.request, os;"
-            "r1=subprocess.run([sys.executable,'run_all.py','--skip-screener']);"
-            "r2=subprocess.run([sys.executable,'generate_dashboard.py']);"
-            f"Path(r'{lock}').unlink(missing_ok=True);"
-            # 读取买入信号数量
-            "signals='';"
-            "try:"
-            " import pandas as pd;"
-            " dfs=pd.read_excel(Path('output/company_batch_analysis').glob('*汇总*.xlsx').__next__(),sheet_name='汇总统计');"
-            " dfs2=pd.read_excel(Path('output/ETF_batch_analysis').glob('*汇总*.xlsx').__next__(),sheet_name='汇总统计');"
-            f" signals=f'个股:{len(dfs)}  ETF:{len(dfs2)}';"
-            "except: pass;"
-            # 发送通知
-            f"title='📊 分析完成 '+signals;"
-            f"bark_key=os.getenv('BARK_KEY','');"
-            f"wechat_key=os.getenv('WECHAT_KEY','');"
-            "if bark_key:"
-            " try:"
-            "  import urllib.parse;"
-            "  urllib.request.urlopen(f'https://api.day.app/{bark_key}/'+urllib.parse.quote(title)+'/'+urllib.parse.quote(signals), timeout=10);"
-            " except: pass;"
-            "if wechat_key:"
-            " try:"
-            "  import urllib.request;"
-            "  urllib.request.Request(f'https://sctapi.ftqq.com/{wechat_key}.send',"
-            "   data=json.dumps({'title':title,'desp':signals}).encode(),"
-            "   headers={'Content-Type':'application/json'});"
-            " except: pass;"
-        )
+        # 后台启动 cron_run.py（分析 + 通知 + 解锁）
         subprocess.Popen(
-            [sys.executable, "-c", script],
+            [sys.executable, "cron_run.py"],
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         self._json({"ok": True, "message": "分析已启动，完成后会发送通知"})

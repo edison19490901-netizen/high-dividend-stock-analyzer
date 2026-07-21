@@ -45,20 +45,28 @@ def run():
         capture_output=False,
     )
 
+    # 清理锁文件
+    lock = Path("output") / ".analysis_running"
+    if lock.exists():
+        lock.unlink()
+
     # 收集结果摘要
     summary = ""
     try:
         import pandas as pd
         for label, dir_name in [("个股", "company_batch_analysis"), ("ETF", "ETF_batch_analysis")]:
-            files = sorted(Path("output") / dir_name).glob("*汇总*.xlsx")
+            p = Path("output") / dir_name
+            if not p.exists():
+                continue
+            files = sorted(p.glob("*汇总*.xlsx"))
             if files:
-                df = pd.read_excel(list(files)[-1], sheet_name="投资建议汇总")
+                df = pd.read_excel(files[-1], sheet_name="投资建议汇总")
                 below = df[df["相对位置"] == "低于"] if "相对位置" in df.columns else df.iloc[:0]
                 summary += f"{label}: {len(df)} 只, 买入信号 {len(below)} 只\n"
                 for _, row in below.iterrows():
                     summary += f"  - {row['名称']} 低于临界 {row['价格差异']}元\n"
-    except Exception:
-        pass
+    except Exception as e:
+        summary = f"分析完成 (exit={r1.returncode},{r2.returncode})"
 
     notify("📊 每日分析完成", summary or "分析完成")
 
