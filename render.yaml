@@ -1,8 +1,5 @@
-# Render Blueprint — 一键部署
-# 文档: https://render.com/docs/blueprint-spec
-
 services:
-  # ── Web 服务：看板 + 追加自选 ──
+  # ── Web 服务 ──
   - type: web
     name: stock-analyzer
     env: python
@@ -15,26 +12,28 @@ services:
         sync: false
       - key: TUSHARE_API_URL
         sync: false
-      - key: RUN_TOKEN
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: BARK_KEY
+        sync: false
+      - key: WECHAT_KEY
         sync: false
       - key: LOG_LEVEL
         value: INFO
       - key: PYTHON_VERSION
         value: "3.11"
 
-  # ── 定时任务：交易日收盘后自动分析 ──
+  # ── 定时任务：每日 18:00 自动分析 ──
   - type: cron
     name: daily-analysis
     env: python
     region: singapore
-    schedule: "30 10 * * 1-5"            # 北京时间 18:30 (UTC+8)
+    schedule: "0 10 * * 1-5"             # 北京时间 18:00 (UTC 10:00)
     buildCommand: pip install -r requirements.txt
     startCommand: python run_all.py --skip-intraday && python generate_dashboard.py
     plan: free
     envVars:
       - key: TUSHARE_TOKEN
-        sync: false
-      - key: TUSHARE_API_URL
         sync: false
       - key: LOG_LEVEL
         value: WARNING
