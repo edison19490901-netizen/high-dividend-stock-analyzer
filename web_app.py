@@ -60,20 +60,35 @@ input:focus{border-color:#3b82f6}
 async function run(){
     const btn=document.querySelector('button');
     btn.disabled=true;
-    document.getElementById('status').textContent='⏳ 正在运行，约需 5-10 分钟...';
+    document.getElementById('status').innerHTML='⏳ 正在后台分析，约需 5-10 分钟...<br><small>可关闭页面，稍后回来刷新</small>';
     try{
         const r=await fetch('/run',{method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({token:document.getElementById('token').value})});
         const d=await r.json();
         if(d.ok){
-            document.getElementById('status').innerHTML='✅ 分析完成！<br><a href="/" style="color:#3b82f6">点击查看看板</a>';
+            document.getElementById('status').innerHTML='⏳ 分析已启动，请等待 5 分钟后 <a href="/" style="color:#3b82f6">刷新页面</a>';
+            // 每 30 秒自动检查是否完成
+            let checks=0;
+            const poll=setInterval(async()=>{
+                checks++;
+                document.getElementById('status').innerHTML='⏳ 分析中... ('+Math.round(checks*0.5)+' 分钟)';
+                try{
+                    const r2=await fetch('/health');
+                    const h=await r2.json();
+                    if(h.dashboard_exists){
+                        clearInterval(poll);
+                        document.getElementById('status').innerHTML='✅ 完成！<br><a href="/" style="color:#3b82f6">点击查看看板</a>';
+                        setTimeout(()=>location.reload(),1000);
+                    }
+                }catch(e){}
+            },30000);
         }else{
             document.getElementById('status').textContent='❌ '+d.error;
             btn.disabled=false;
         }
     }catch(e){
-        document.getElementById('status').textContent='❌ 网络错误: '+e.message;
+        document.getElementById('status').textContent='❌ 启动失败，请重试';
         btn.disabled=false;
     }
 }
@@ -151,7 +166,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         # API
         if path == "/health":
-            self._json({"status": "ok"})
+            self._json({"status": "ok", "dashboard_exists": DASHBOARD_FILE.exists()})
             return
 
         # 首页
@@ -237,25 +252,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._json({"ok": False, "error": f"分析运行中（{int(age)}s 前）"}, 409)
                 return
 
-        print("[run] 启动全量分析...")
-        try:
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            lock.write_text(datetime.now().isoformat())
-            subprocess.run(
-                [sys.executable, "run_all.py", "--skip-screener"],
-                capture_output=True, timeout=900,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            )
-            subprocess.run(
-                [sys.executable, "generate_dashboard.py"],
-                capture_output=True, timeout=60,
-            )
-            lock.unlink()
-            self._json({"ok": True})
-        except Exception as e:
-            if lock.exists():
-                lock.unlink()
-            self._json({"ok": False, "error": str(e)}, 500)
+        print("[run] 启动后台分析...")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        lock.write_text(datetime.now().isoformat())
+
+        # 后台执行（Render HTTP 请求 30s 超时，必须立即返回）
+        script = (
+            f'import subprocess, sys;'
+            f'r1=subprocess.run([sys.executable,"run_all.py","--skip-screener"]);'
+            f'r2=subprocess.run([sys.executable,"generate_dashboard.py"]);'
+            f'Path(r"{lock}").unlink(missing_ok=True)'
+        )
+        subprocess.Popen(
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+        self._json({"ok": True, "message": "分析已在后台启动，约需 5-10 分钟"})
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
