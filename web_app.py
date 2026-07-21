@@ -304,14 +304,13 @@ button{{background:#3b82f6;color:#fff;border:none;padding:14px;border-radius:10p
     def log_message(self, format, *args):
         print(f"[server] {args[0]}")
 
-
-def _serve_landing(self):
-    html = LANDING_PAGE.encode("utf-8")
-    self.send_response(200)
-    self.send_header("Content-Type", "text/html; charset=utf-8")
-    self.send_header("Content-Length", str(len(html)))
-    self.end_headers()
-    self.wfile.write(html)
+    def _serve_landing(self):
+        html = LANDING_PAGE.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
 
 
 LANDING_PAGE = """<!DOCTYPE html><html lang="zh-CN">
