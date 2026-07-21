@@ -75,6 +75,21 @@ def load_data():
         except Exception:
             pass
 
+    # 按低估→高估排序：
+    #   低于临界买点的在前（gap 越大的越低估，排最前）
+    #   高于临界买点的在后（gap 越小的越接近买点）
+    def sort_key(item):
+        position = str(item.get("position", "高于"))
+        diff = _safe_float(item.get("diff_to_crit", 0))
+        if position == "低于":
+            # 低于临界: gap 越大越低估 → 负值大的排前
+            return (-diff - 100000, "")
+        else:
+            # 高于临界: gap 越小越接近买点 → 正值小的排前
+            return (diff, "")
+    for lst in [stocks, etfs]:
+        lst.sort(key=sort_key)
+
     # 计算摘要
     stock_below = [s for s in stocks if s.get("position") == "低于"]
     etf_below = [e for e in etfs if e.get("position") == "低于"]
@@ -163,7 +178,9 @@ def render_dashboard(data: dict) -> str:
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f172a">
 <title>高股息 + 高价值 + 低价格 分析看板</title>
 <style>
 :root {{
@@ -369,13 +386,52 @@ tr.row-buy:hover {{ background: rgba(34,197,94,0.10); }}
 }}
 .search-box:focus {{ border-color: var(--blue); }}
 
-/* Responsive */
+/* Responsive — 手机适配 */
 @media (max-width:768px) {{
-    .container {{ padding:10px; }}
-    .header h1 {{ font-size:1.4rem; }}
-    table {{ font-size:0.78rem; }}
-    th, td {{ padding: 8px 10px; }}
-    .stat-grid {{ grid-template-columns: repeat(2, 1fr); }}
+    .container {{ padding:8px; }}
+    .header {{ padding:20px 10px 16px; }}
+    .header h1 {{ font-size:1.2rem; }}
+    .header .subtitle {{ font-size:0.8rem; }}
+    .stat-grid {{ grid-template-columns: repeat(2, 1fr); gap:8px; }}
+    .stat-card {{ padding:14px 10px; }}
+    .stat-card .stat-value {{ font-size:1.4rem; }}
+    .stat-card .stat-label {{ font-size:0.7rem; }}
+
+    /* 追加自选 — 上下堆叠 */
+    #addStockSection, #addEtfSection {{ min-width:100%; }}
+
+    /* 表格 — 横向滚动 */
+    .section-body {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+    table {{ font-size:0.72rem; white-space:nowrap; }}
+    th, td {{ padding:6px 8px; }}
+
+    /* 隐藏次要列（均价、强度条在小屏上太拥挤） */
+    th:nth-child(4), td:nth-child(4),  /* 均价 */
+    th:nth-child(9), td:nth-child(9)   /* 强度条 */
+    {{ display:none; }}
+
+    /* 搜索框全宽 */
+    .search-box {{ width:140px; font-size:0.8rem; }}
+
+    /* 买入信号卡片 */
+    .alert-item {{ padding:8px 14px; font-size:0.8rem; }}
+    .alert-item .alert-name {{ font-size:0.85rem; }}
+
+    /* 标签页 */
+    .tab {{ padding:10px 16px; font-size:0.8rem; }}
+
+    /* 按钮加大触控区 */
+    button {{ min-height:36px; }}
+
+    /* 追加区域输入框全宽 */
+    #addStockSection input, #addEtfSection input {{ width:100% !important; margin-bottom:6px; }}
+}}
+
+/* 超小屏（<400px）进一步精简 */
+@media (max-width:400px) {{
+    th:nth-child(6), td:nth-child(6) {{ display:none; }} /* 价差% */
+    .stat-grid {{ grid-template-columns: 1fr 1fr; gap:6px; }}
+    .stat-card .stat-value {{ font-size:1.2rem; }}
 }}
 </style>
 </head>
@@ -407,6 +463,36 @@ tr.row-buy:hover {{ background: rgba(34,197,94,0.10); }}
         <div class="stat-card yellow">
             <div class="stat-value">{data["etf_below_count"]}</div>
             <div class="stat-label">🔍 低于临界买点（ETF）</div>
+        </div>
+    </div>
+
+    <!-- Add Stock & ETF -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:24px;">
+        <!-- 追加个股 -->
+        <div class="section" id="addStockSection">
+            <div class="section-header">
+                <h2>➕ 追加自选股</h2>
+                <span class="count" id="addedStockCount" style="display:none"></span>
+            </div>
+            <div style="padding:12px 20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <input type="text" id="addStockCode" placeholder="代码 (如 601398.SH)" style="padding:8px 12px; border-radius:8px; border:1px solid #334155; background:rgba(255,255,255,0.05); color:#e2e8f0; width:170px; outline:none;">
+                <input type="text" id="addStockName" placeholder="名称 (可选)" style="padding:8px 12px; border-radius:8px; border:1px solid #334155; background:rgba(255,255,255,0.05); color:#e2e8f0; width:120px; outline:none;">
+                <button onclick="addTarget('stock')" style="padding:8px 16px; border-radius:8px; border:none; background:#3b82f6; color:#fff; cursor:pointer; font-size:0.85rem;">追加</button>
+                <span id="addStockStatus" style="color:#94a3b8; font-size:0.8rem;"></span>
+            </div>
+        </div>
+        <!-- 追加 ETF -->
+        <div class="section" id="addEtfSection">
+            <div class="section-header">
+                <h2>📊 追加 ETF</h2>
+                <span class="count" id="addedEtfCount" style="display:none"></span>
+            </div>
+            <div style="padding:12px 20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <input type="text" id="addEtfCode" placeholder="代码 (如 510050.SH)" style="padding:8px 12px; border-radius:8px; border:1px solid #334155; background:rgba(255,255,255,0.05); color:#e2e8f0; width:170px; outline:none;">
+                <input type="text" id="addEtfName" placeholder="名称 (可选)" style="padding:8px 12px; border-radius:8px; border:1px solid #334155; background:rgba(255,255,255,0.05); color:#e2e8f0; width:120px; outline:none;">
+                <button onclick="addTarget('etf')" style="padding:8px 16px; border-radius:8px; border:none; background:#8b5cf6; color:#fff; cursor:pointer; font-size:0.85rem;">追加</button>
+                <span id="addEtfStatus" style="color:#94a3b8; font-size:0.8rem;"></span>
+            </div>
         </div>
     </div>
 
@@ -529,7 +615,135 @@ function highlightRow(tr) {{
     }}, 600);
 }}
 
+// ── 追加自选（个股 & ETF） ──
+const LS_STOCKS = 'dashboard_added_stocks';
+const LS_ETFS = 'dashboard_added_etfs';
+let addedStocks = JSON.parse(localStorage.getItem(LS_STOCKS) || '[]');
+let addedEtfs = JSON.parse(localStorage.getItem(LS_ETFS) || '[]');
+
+function loadAdded() {{
+    addedStocks.forEach(s => insertRow(s, 'stock', true));
+    addedEtfs.forEach(e => insertRow(e, 'etf', true));
+    updateAddedCounts();
+}}
+
+function addTarget(type) {{
+    const codeId = type === 'stock' ? 'addStockCode' : 'addEtfCode';
+    const nameId = type === 'stock' ? 'addStockName' : 'addEtfName';
+    const statusId = type === 'stock' ? 'addStockStatus' : 'addEtfStatus';
+    const list = type === 'stock' ? addedStocks : addedEtfs;
+    const lsKey = type === 'stock' ? LS_STOCKS : LS_ETFS;
+
+    const code = document.getElementById(codeId).value.trim();
+    const name = document.getElementById(nameId).value.trim() || code;
+    const status = document.getElementById(statusId);
+    if (!code) {{ status.textContent = '请输入代码'; return; }}
+    if (list.find(s => s.code === code)) {{ status.textContent = '已存在'; return; }}
+
+    status.textContent = '⏳ 分析中...';
+    status.style.color = '#eab308';
+
+    // 检测是否在本地文件模式
+    if (window.location.protocol === 'file:') {{
+        status.textContent = '请通过 web 服务访问: python web_app.py';
+        status.style.color = '#ef4444';
+        return;
+    }}
+
+    fetch('/analyze', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{code: code, name: name}})
+    }})
+    .then(r => r.json())
+    .then(data => {{
+        if (data.ok && data.stats) {{
+            const s = data.stats;
+            list.push(s);
+            localStorage.setItem(lsKey, JSON.stringify(list));
+            insertRow(s, type, false);
+            updateAddedCounts();
+            document.getElementById(codeId).value = '';
+            document.getElementById(nameId).value = '';
+            status.textContent = '✅ ' + s.name;
+            status.style.color = '#22c55e';
+            updateStatCards();
+        }} else {{
+            status.textContent = '❌ ' + (data.error || '失败');
+            status.style.color = '#ef4444';
+        }}
+    }})
+    .catch(e => {{
+        status.textContent = '❌ ' + e.message;
+        status.style.color = '#ef4444';
+    }});
+}}
+
+function insertRow(s, type, isRestore) {{
+    const tbody = document.getElementById(type === 'stock' ? 'stockTableBody' : 'etfTableBody');
+    const pos = s.position || (s.latest_price <= s.critical_buy_point ? '低于' : '高于');
+    const diff = s.diff_to_crit || Math.abs(s.latest_price - s.critical_buy_point);
+    const pct = s.mean ? ((s.latest_price - s.mean) / s.mean * 100).toFixed(1) : '0.0';
+    const crit = s.critical_buy_point || 0;
+    const barPct = crit > 0 ? Math.min(100, Math.max(0, (s.latest_price - (s.min||s.latest_price)) / (crit - (s.min||s.latest_price)) * 100 || 50)) : 50;
+
+    const rowClass = pos === '低于' ? 'row-buy' : '';
+    const badgeClass = pos === '低于' ? 'badge-low' : 'badge-high';
+    const pctClass = parseFloat(pct) >= 0 ? 'pct-pos' : 'pct-neg';
+
+    const tr = document.createElement('tr');
+    tr.className = rowClass + ' added-row';
+    tr.innerHTML = `
+        <td><span style="color:#a855f7;font-size:0.7rem;">自选</span></td>
+        <td class="name-cell" title="${{s.code}}">${{s.name}}<span class="code-sub">${{s.code}}</span></td>
+        <td class="num">${{s.latest_price.toFixed(2)}}</td>
+        <td class="num">${{(s.mean || 0).toFixed(2)}}</td>
+        <td class="num">${{crit.toFixed(2)}}</td>
+        <td class="num ${{pctClass}}">${{parseFloat(pct)>=0?'+':''}}${{pct}}%</td>
+        <td class="num">${{pos==='低于'?'-':'+'}}${{diff.toFixed(2)}}</td>
+        <td><span class="${{badgeClass}}">${{pos}}</span></td>
+        <td><div class="mini-bar"><div class="mini-bar-fill" style="width:${{barPct}}%;background:${{pos==='低于'?'#22c55e':'#ef4444'}}"></div></div></td>
+        <td><button onclick="removeTarget('${{s.code}}','${{type}}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.8rem;" title="移除">✕</button></td>
+    `;
+    tr.onclick = function() {{ highlightRow(this); }};
+    tbody.insertBefore(tr, tbody.firstChild);
+
+    if (!isRestore) {{
+        tr.style.background = 'rgba(168,85,247,0.15)';
+        setTimeout(() => tr.style.background = '', 2000);
+    }}
+}}
+
+function removeTarget(code, type) {{
+    const list = type === 'stock' ? addedStocks : addedEtfs;
+    const key = type === 'stock' ? LS_STOCKS : LS_ETFS;
+    if (type === 'stock') addedStocks = list.filter(s => s.code !== code);
+    else addedEtfs = list.filter(e => e.code !== code);
+    localStorage.setItem(key, JSON.stringify(type === 'stock' ? addedStocks : addedEtfs));
+    document.querySelectorAll('.added-row').forEach(r => {{
+        if (r.textContent.includes(code)) r.remove();
+    }});
+    updateAddedCounts();
+    updateStatCards();
+}}
+
+function updateAddedCounts() {{
+    ['Stock','Etf'].forEach(t => {{
+        const el = document.getElementById('added' + t + 'Count');
+        const n = t === 'Stock' ? addedStocks.length : addedEtfs.length;
+        if (el) {{ el.style.display = n > 0 ? '' : 'none'; el.textContent = '已追加 ' + n + ' 只'; }}
+    }});
+}}
+
+function updateStatCards() {{
+    const stockBelow = document.querySelectorAll('#stockTableBody .badge-low').length;
+    const etfBelow = document.querySelectorAll('#etfTableBody .badge-low').length;
+    const cards = document.querySelectorAll('.stat-card .stat-value');
+    if (cards.length >= 4) {{ cards[1].textContent = stockBelow; cards[3].textContent = etfBelow; }}
+}}
+
 // Init
+loadAdded();
 document.getElementById('rowCount').textContent = '显示 ' + document.querySelectorAll('#stockTableBody tr').length + ' / ' + document.querySelectorAll('#stockTableBody tr').length;
 </script>
 

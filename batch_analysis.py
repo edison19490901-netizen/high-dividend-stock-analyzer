@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 # Fix Windows GBK encoding for emoji
@@ -40,6 +41,105 @@ from config import (
 from targets import STOCK_TARGETS, ETF_TARGETS
 
 logger = setup_logging("batch_analysis")
+
+
+# ===================== CSV 导入 =====================
+
+def load_targets_from_csv(filepath: str) -> list[dict[str, str]]:
+    """
+    从 CSV 文件加载标的列表。
+
+    支持格式:
+      - code,name           (标准 CSV，无表头自动检测)
+      - 000651.SZ,格力电器   (每行一个标的)
+      - # 开头的行视为注释
+    """
+    import csv
+    from pathlib import Path
+
+    path = Path(filepath)
+    if not path.exists():
+        logger.error("文件不存在: %s", filepath)
+        return []
+
+    targets = []
+    with open(path, "r", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row or len(row) < 2:
+                continue
+            code, name = row[0].strip(), row[1].strip()
+            # 跳过注释和表头
+            if code.startswith("#") or code.lower() == "code":
+                continue
+            if code and name:
+                targets.append({"code": code, "name": name})
+
+    logger.info("从 %s 加载了 %d 个标的", filepath, len(targets))
+    return targets
+
+
+def load_targets_from_txt(filepath: str) -> list[dict[str, str]]:
+    """
+    从 TXT 文件加载标的列表。
+
+    支持格式: 每行一个标的
+      000651.SZ,格力电器
+      # 注释行
+    """
+    path = Path(filepath)
+    if not path.exists():
+        logger.error("文件不存在: %s", filepath)
+        return []
+
+    targets = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",", 1)
+            if len(parts) == 2:
+                code, name = parts[0].strip(), parts[1].strip()
+                if code and name:
+                    targets.append({"code": code, "name": name})
+
+    logger.info("从 %s 加载了 %d 个标的", filepath, len(targets))
+    return targets
+
+
+def resolve_targets(stock_list: str | None, etf_list: str | None,
+                    mode: str = "all") -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """
+    解析最终使用的标的列表。
+
+    优先级: CLI 参数 > targets.py 默认列表
+    """
+    # 个股列表
+    if stock_list:
+        if stock_list.endswith(".csv"):
+            stocks = load_targets_from_csv(stock_list)
+        elif stock_list.endswith(".txt"):
+            stocks = load_targets_from_txt(stock_list)
+        else:
+            logger.warning("不支持的格式: %s，使用默认列表", stock_list)
+            stocks = STOCK_TARGETS
+    else:
+        stocks = STOCK_TARGETS
+
+    # ETF 列表
+    if etf_list:
+        if etf_list.endswith(".csv"):
+            etfs = load_targets_from_csv(etf_list)
+        elif etf_list.endswith(".txt"):
+            etfs = load_targets_from_txt(etf_list)
+        else:
+            logger.warning("不支持的格式: %s，使用默认列表", etf_list)
+            etfs = ETF_TARGETS
+    else:
+        etfs = ETF_TARGETS
+
+    return stocks, etfs
 
 
 # ===================== 工具函数 =====================
@@ -276,7 +376,9 @@ def analyze_single_etf(code: str, name: str, years: int = 3,
 
 # ===================== 批量入口 =====================
 
-def run_batch(mode: str = "all", years: int = 3) -> dict:
+def run_batch(mode: str = "all", years: int = 3,
+              stock_list: str | None = None,
+              etf_list: str | None = None) -> dict:
     """
     批量分析入口。
 
@@ -284,18 +386,22 @@ def run_batch(mode: str = "all", years: int = 3) -> dict:
     ----
     mode : "stock" / "etf" / "all"
     years : 统计周期（年）
+    stock_list : 自定义个股 CSV/TXT 文件路径（可选）
+    etf_list : 自定义 ETF CSV/TXT 文件路径（可选）
 
     返回
     ----
     {"stocks": [...], "etfs": [...]}
     """
+    stocks_custom, etfs_custom = resolve_targets(stock_list, etf_list, mode)
     all_results: dict[str, list[dict]] = {"stocks": [], "etfs": []}
 
     # 个股
     if mode in ("stock", "all"):
-        stocks = STOCK_TARGETS
+        stocks = stocks_custom
+        source = f"(来自 {stock_list})" if stock_list else "(默认列表)"
         print(f"\n{'=' * 60}")
-        print(f"📈 个股批量分析 — {len(stocks)} 只")
+        print(f"📈 个股批量分析 — {len(stocks)} 只 {source}")
         print(f"{'=' * 60}")
 
         for i, item in enumerate(stocks, 1):
@@ -311,9 +417,10 @@ def run_batch(mode: str = "all", years: int = 3) -> dict:
 
     # ETF
     if mode in ("etf", "all"):
-        etfs = ETF_TARGETS
+        etfs = etfs_custom
+        source = f"(来自 {etf_list})" if etf_list else "(默认列表)"
         print(f"\n{'=' * 60}")
-        print(f"📊 ETF 批量分析 — {len(etfs)} 只")
+        print(f"📊 ETF 批量分析 — {len(etfs)} 只 {source}")
         print(f"{'=' * 60}")
 
         for i, item in enumerate(etfs, 1):
@@ -406,14 +513,16 @@ def main():
                         help="标的名称（配合 --code 使用）")
     parser.add_argument("--years", type=int, default=3,
                         help="统计周期年数 (default: 3)")
+    parser.add_argument("--stock-list", type=str, default=None,
+                        help="自定义个股列表 (CSV 或 TXT 文件)")
+    parser.add_argument("--etf-list", type=str, default=None,
+                        help="自定义 ETF 列表 (CSV 或 TXT 文件)")
     args = parser.parse_args()
 
     if args.code:
-        # 判断是 ETF 还是个股
         code = args.code.strip()
         name = args.name or code
         if code.startswith(("15", "51", "58")):
-            # ETF
             result = analyze_single_etf(code, name, years=args.years)
         else:
             result = analyze_single_stock(code, name, years=args.years)
@@ -422,7 +531,8 @@ def main():
         else:
             print(f"\n❌ {name} 分析失败")
     else:
-        run_batch(mode=args.mode, years=args.years)
+        run_batch(mode=args.mode, years=args.years,
+                  stock_list=args.stock_list, etf_list=args.etf_list)
         print("\n✅ 批量分析全部完成！")
 
 

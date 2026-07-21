@@ -183,9 +183,20 @@ def main():
     # 保存 CSV
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
-    csv_path = output_dir / f"高股息筛选结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-    print(f"\n结果已保存: {csv_path}")
+
+    # 标准文件名（供 batch_analysis 自动读取）
+    auto_path = output_dir / "screened_stocks.csv"
+    # 带时间戳的归档副本
+    archive_path = output_dir / f"高股息筛选结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    # 写入 batch_analysis 可识别的格式 (code, name)
+    auto_df = df.rename(columns={"股票代码": "code", "股票名称": "name"})[["code", "name"]]
+    auto_df.to_csv(auto_path, index=False, encoding="utf-8-sig")
+    df.to_csv(archive_path, index=False, encoding="utf-8-sig")
+
+    print(f"\n结果已保存:")
+    print(f"  自动导入: {auto_path}  (batch_analysis 将自动读取)")
+    print(f"  详细归档: {archive_path}")
 
 
 if __name__ == "__main__":
