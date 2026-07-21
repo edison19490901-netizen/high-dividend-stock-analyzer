@@ -14,7 +14,9 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-OUTPUT_DIR = Path("output")
+# 使用绝对路径，避免 Render 工作目录问题
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output"
 DASHBOARD_FILE = OUTPUT_DIR / "dashboard.html"
 RUN_TOKEN = os.getenv("RUN_TOKEN", "")
 
@@ -142,51 +144,39 @@ def _read_single_result(code: str) -> dict | None:
 class DashboardHandler(SimpleHTTPRequestHandler):
     """自定义 HTTP 处理器：静态文件 + API 端点。"""
 
-    def __init__(self, *args, **kwargs):
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        super().__init__(*args, directory=str(OUTPUT_DIR), **kwargs)
-
     def do_GET(self):
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         parsed = urlparse(self.path)
+        path = parsed.path
 
-        if parsed.path == "/health":
+        # API
+        if path == "/health":
             self._json({"status": "ok"})
             return
 
-        # 首页: dashboard.html 不存在时显示引导页
-        if parsed.path == "/" or parsed.path == "/index.html":
+        # 首页
+        if path in ("/", "/index.html", "/dashboard.html"):
             if DASHBOARD_FILE.exists():
-                self._serve_file("dashboard.html")
+                self._serve_html(DASHBOARD_FILE)
             else:
                 self._serve_landing()
             return
 
-        # dashboard.html 别名
-        if parsed.path == "/dashboard.html":
-            if DASHBOARD_FILE.exists():
-                self._serve_file("dashboard.html")
-            else:
-                self._serve_landing()
-            return
-
-        # 默认 → 静态文件
-        super().do_GET()
-
-    def _serve_file(self, filename: str):
-        """发送静态文件。"""
-        filepath = OUTPUT_DIR / filename
-        if not filepath.exists():
+        # 静态文件
+        filepath = OUTPUT_DIR / path.lstrip("/")
+        if filepath.exists() and filepath.is_file():
+            self._serve_html(filepath)
+        else:
             self.send_error(404, "File not found")
-            return
+
+    def _serve_html(self, filepath: Path):
+        """发送 HTML 文件。"""
+        content = filepath.read_bytes()
         self.send_response(200)
-        if filename.endswith(".html"):
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-        elif filename.endswith(".css"):
-            self.send_header("Content-Type", "text/css; charset=utf-8")
-        elif filename.endswith(".js"):
-            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
         self.end_headers()
-        self.wfile.write(filepath.read_bytes())
+        self.wfile.write(content)
 
     def _serve_landing(self):
         """显示首次使用引导页。"""
