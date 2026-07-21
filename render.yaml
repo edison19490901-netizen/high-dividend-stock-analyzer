@@ -30,7 +30,7 @@ services:
     region: singapore
     schedule: "0 10 * * 1-5"             # 北京时间 18:00 (UTC 10:00)
     buildCommand: pip install -r requirements.txt
-    startCommand: python run_all.py --skip-intraday && python generate_dashboard.py
+    startCommand: python cron_run.py
     plan: free
     envVars:
       - key: TUSHARE_TOKEN
